@@ -102,6 +102,7 @@ def parseArg():
     group1.add_argument("-M", "--maximum-length", default=None, type=int, metavar="LEN[:LEN2]", help=argparse.SUPPRESS)
     group1.add_argument("--numba-pll", default=None, action='store_false', help=argparse.SUPPRESS)
     group1.add_argument("--numba-cuda", default=None, action='store_false', help=argparse.SUPPRESS)
+    group1.add_argument("--trim_polyN", default=0, type=int, help=argparse.SUPPRESS)
     
     group4 = parser.add_argument_group('miRNA Error Correction', description='''microRNA correction method for single base substitutions due to sequencing errors (Note: Refines reads at the expense of time)
 -mEC,  --miREC              Enable miRNA error correction (miREC)

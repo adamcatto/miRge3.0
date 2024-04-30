@@ -84,6 +84,11 @@ def stipulate(args):
         adapters = adapter_parser.parse_multi(args.adapters)
     warn_duplicate_adapters(adapters)
 
+    ## PolyN trimming
+    if args.trim_polyN > 0:
+        from mirge.classes.modifiers import RepeatNucleotideTrimmer
+        pipeline_add(RepeatNucleotideTrimmer(args.trim_polyN))
+
     if args.nextseq_trim is not None:
         pipeline_add(NextseqQualityTrimmer(args.nextseq_trim, args.phred64))
     if args.quality_cutoff is not None:
@@ -108,7 +113,9 @@ def baking(args, inFileArray, inFileBaseArray, workDir):
     THIS FUNCTION PREPARES FUNCTIONS REQUIRED TO RUN IN CUTADAPT 2.7 AND PARSE ONE FILE AT A TIME. 
     """
     global ingredients, threads, buffer_size, trimmed_reads, fasta, fileTowriteFasta, min_len, umi, qiagenumi, qiaAdapter, ModificationInfo, cu_ver
+    global cu_ver
     cu_ver = int(args.cutadaptVersion[0]) # Cutadapt version (cu_ver)
+    print(cu_ver)
     if int(args.cutadaptVersion[0]) >= 3:
         from cutadapt.modifiers import ModificationInfo
     umi = args.uniq_mol_ids
@@ -137,24 +144,16 @@ def baking(args, inFileArray, inFileBaseArray, workDir):
             count=trimmed=0
             completeDict = {}
             with concurrent.futures.ProcessPoolExecutor(max_workers=threads) as executor:
-                future = [executor.submit(cutadapt, bytes(i)) for i in dnaio.read_chunks(f, buffer_size)]
+                future = [executor.submit(cutadapt, bytes(i), args) for i in dnaio.read_chunks(f, buffer_size)]
                 for fqres_pairs in concurrent.futures.as_completed(future):
                     a , b = fqres_pairs.result()
                     count+= a
                     for each_list in b:
                         varx = list(each_list)
-                        if umi:
-                            umi_cut = umi.split(",")
-                            pureSeq, cutumiSeq = UMIParser(varx[0], int(umi_cut[0]), int(umi_cut[1]))
-                            try:
-                                visual_treat['rlen'][str(inFileBaseArray[index])].append(len(pureSeq))
-                            except KeyError:
-                                visual_treat['rlen'][str(inFileBaseArray[index])]= [len(pureSeq)]
-                        else:
-                            try:
-                                visual_treat['rlen'][str(inFileBaseArray[index])].append(len(varx[0]))
-                            except KeyError:
-                                visual_treat['rlen'][str(inFileBaseArray[index])]= [len(varx[0])]
+                        try:
+                            visual_treat['rlen'][str(inFileBaseArray[index])].append(len(varx[0]))
+                        except KeyError:
+                            visual_treat['rlen'][str(inFileBaseArray[index])]= [len(varx[0])]
                         if varx[0] in completeDict: # Collapsing, i.e., counting the occurance of each read for each data 
                             completeDict[varx[0]] += int(varx[1])
                             trimmed+=int(varx[1])
@@ -317,10 +316,16 @@ def UMIParser(s, f, b):
 
 
 # THIS IS WHERE EVERYTHIHNG HAPPENS - Modifiers, filters etc...
-def cutadapt(n):
+def cutadapt(n, args):
     z = io.BytesIO(n)
     readDict={}
     count = 0
+    cu_ver = int(args.cutadaptVersion[0]) # Cutadapt version (cu_ver)
+    qiagenumi = args.qiagenumi
+    ingredients = stipulate(args)
+    min_len = args.minimum_length
+    if int(args.cutadaptVersion[0]) >= 3:
+        from cutadapt.modifiers import ModificationInfo
     with dnaio.open(z) as fq:
         for fqreads in fq:
             count+=1
@@ -330,46 +335,37 @@ def cutadapt(n):
             else:
                 matches=[]
             if qiagenumi:
-                currentSeq = fqreads.sequence
-                umi_seq = ""
-                for modifier in ingredients:
-                    if int(cu_ver) >= 3:
-                        fqreads = modifier(fqreads, info)
-                    else:
-                        fqreads = modifier(fqreads, matches)
-                try:
-                    umi_seq = currentSeq.split(str(fqreads.sequence))[1]
-                    umi_cut = umi.split(",")
-                    max_ad = len(qiaAdapter) + int(umi_cut[1])
-                    umi_seq = umi_seq[:max_ad][-int(umi_cut[1]):]
-                except ValueError:
-                    umi_seq = ""
-                final_seq = fqreads.sequence + umi_seq
-                if int(len(fqreads.sequence)) >= int(min_len):
-                    if str(final_seq) in readDict:
-                        readDict[str(final_seq)]+=1
-                    else:
-                        readDict[str(final_seq)]=1
+	            currentSeq = fqreads.sequence
+	            umi_seq = ""
+	            for modifier in ingredients:
+	                if int(cu_ver) >= 3:
+	                    fqreads = modifier(fqreads, info)
+	                else:
+	                    fqreads = modifier(fqreads, matches)
+	            try:
+	                umi_seq = currentSeq.split(str(fqreads.sequence))[1]
+	                umi_cut = umi.split(",")
+	                max_ad = len(qiaAdapter) + int(umi_cut[1])
+	                umi_seq = umi_seq[:max_ad][-int(umi_cut[1]):]
+	            except ValueError:
+	                umi_seq = ""
+	            final_seq = fqreads.sequence + umi_seq
+	            if int(len(final_seq)) >= int(min_len):
+	                if str(final_seq) in readDict:
+	                    readDict[str(final_seq)]+=1
+	                else:
+	                    readDict[str(final_seq)]=1
             else:
-                for modifier in ingredients:
-                    if int(cu_ver) >= 3:
-                        fqreads = modifier(fqreads, info)
-                    else:
-                        fqreads = modifier(fqreads, matches)
-                    if umi:
-                        umi_cut = umi.split(",")
-                        pureSeq, cutumiSeq = UMIParser(fqreads.sequence, int(umi_cut[0]), int(umi_cut[1]))
-                        if len(pureSeq) >= int(min_len):
-                            if str(fqreads.sequence) in readDict:
-                                readDict[str(fqreads.sequence)] += 1
-                            else:
-                                readDict[str(fqreads.sequence)] = 1
-                    else:
-                        if int(len(fqreads.sequence)) >= int(min_len):
-                            #print(fqreads.sequence)
-                            if str(fqreads.sequence) in readDict:
-                                readDict[str(fqreads.sequence)]+=1
-                            else:
-                                readDict[str(fqreads.sequence)]=1
+	            for modifier in ingredients:
+	                if int(cu_ver) >= 3:
+	                    fqreads = modifier(fqreads, info)
+	                else:
+	                    fqreads = modifier(fqreads, matches)
+	            if int(len(fqreads.sequence)) >= int(min_len):
+	                #print(fqreads.sequence)
+	                if str(fqreads.sequence) in readDict:
+	                    readDict[str(fqreads.sequence)]+=1
+	                else:
+	                    readDict[str(fqreads.sequence)]=1
         trimmed_pairs = list(readDict.items())
     return (count, trimmed_pairs)
